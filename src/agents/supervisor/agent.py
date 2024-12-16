@@ -30,9 +30,12 @@ from utils.filter_messages import (
 )
 from utils.logging import get_logger
 from utils.models.factory import IModel, ModelType
+import re
+import yaml
 
 SUPERVISOR = "Supervisor"
 ROUTER = "Router"
+YAML_PATTERN = r"```yaml\n.*?```"
 
 logger = get_logger(__name__)
 
@@ -221,6 +224,80 @@ class SupervisorAgent:
             final_response = await final_response_chain.ainvoke(
                 {"messages": filter_messages(state.messages)},
             )
+
+            return {
+                MESSAGES: [
+                    AIMessage(
+                        content=final_response.content,
+                        name=FINALIZER,
+                    )
+                ],
+                NEXT: END,
+            }
+        except Exception as e:
+            logger.error(f"Error in generating final response: {e}")
+            return {
+                MESSAGES: [
+                    AIMessage(
+                        content=f"Sorry, I encountered an error while processing the request. Error: {e}",
+                        name=FINALIZER,
+                    )
+                ]
+            }
+
+    def _replace_yaml_with_html(
+        self, finalizer_response: str, html_replacements: str
+    ) -> str:
+        """Replace YAML code blocks in markdown text with HTML code blocks."""
+
+        def replace_func(match):
+            # Get the next replacement if available, otherwise keep original
+            if html_replacements:
+                html_content = html_replacements.pop(0)
+
+                return f"```html\n{html_content}\n```"
+            return match.group(0)
+
+        # Replace each YAML block
+        converted_response = re.sub(
+            YAML_PATTERN, replace_func, finalizer_response, flags=re.DOTALL
+        )
+        return converted_response
+
+    def _create_html_replacment_for_yaml(
+        self, state: SupervisorState
+    ) -> list[str, Any]:
+        """Extract YAML code blocks from finalizer response and convert into given format."""
+
+        finalizer_response = state.messages[-1]
+
+        yaml_blocks = re.findall(YAML_PATTERN, finalizer_response.content, re.DOTALL)
+
+        parsed_blocks = []
+        for block in yaml_blocks:
+            try:
+                parsed_yaml = yaml.safe_load(block)
+                parsed_blocks.append(parsed_yaml)
+            except yaml.YAMLError as e:
+                print(f"Error parsing YAML block: {e}")
+
+    def _convert_final_response(self, state: SupervisorState) -> dict[str, Any]:
+        """Extract YAML code blocks from finalizer response and convert into given format."""
+
+        finalizer_response = state.messages[-1]
+
+        try:
+            yaml_blocks = re.findall(
+                YAML_PATTERN, finalizer_response.content, re.DOTALL
+            )
+
+            parsed_blocks = []
+            for block in yaml_blocks:
+                try:
+                    parsed_yaml = yaml.safe_load(block)
+                    parsed_blocks.append(parsed_yaml)
+                except yaml.YAMLError as e:
+                    print(f"Error parsing YAML block: {e}")
 
             return {
                 MESSAGES: [
